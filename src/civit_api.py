@@ -1,6 +1,8 @@
-
 import requests
-from src.models import Creator, Model, ModelVersion, Tag
+from src.models import Creator, Model, ModelVersion, Tag, ModelVersionFile, ModelVersionImage
+import json
+from datetime import datetime
+import dateutil.parser
 
 def _request_creators(limit=20, page=1, query=None) -> dict:
     """_request_creators _summary_
@@ -138,38 +140,60 @@ def get_models(
 
     # Create a list of Model objects from the data
     models = []
+    modelVersions = []
+    modelVersionFiles = []
+    modelVersionImages = []
+    import json
     for item in data["items"]:
         model = Model(
+            id=int(item["id"]),
             name=item["name"],
             description=item["description"],
             type=item["type"],
             nsfw=item["nsfw"],
-            tags=item["tags"],
+            tags=json.dumps(item["tags"]),
             creator_username=item["creator"]["username"],
             creator_image=item["creator"]["image"],
-            model_versions_id=item["modelVersions"]["id"],
-            model_versions_name=item["modelVersions"]["name"],
-            model_versions_created_at=item["modelVersions"]["createdAt"],
-            model_versions_download_url=item["modelVersions"]["downloadUrl"],
-            model_versions_trained_words=item["modelVersions"]["trainedWords"],
-            model_versions_files_size_kb=item["modelVersions"]["files"]["sizeKb"],
-            model_versions_files_format=item["modelVersions"]["files"]["format"],
-            model_versions_files_pickle_scan_result=item["modelVersions"]["files"][
-                "pickleScanResult"
-            ],
-            model_versions_files_virus_scan_result=item["modelVersions"]["files"][
-                "virusScanResult"
-            ],
-            model_versions_files_scanned_at=item["modelVersions"]["files"]["scannedAt"],
-            model_versions_images_url=item["modelVersions"]["images"]["url"],
-            model_versions_images_nsfw=item["modelVersions"]["images"]["nsfw"],
-            model_versions_images_width=item["modelVersions"]["images"]["width"],
-            model_versions_images_height=item["modelVersions"]["images"]["height"],
-            model_versions_images_hash=item["modelVersions"]["images"]["hash"],
-            model_versions_images_meta=item["modelVersions"]["images"]["meta"],
         )
         models.append(model)
-    return metadata, models
+        for data in item["modelVersions"]:
+            model_version = ModelVersion(
+                id=int(data["id"]),
+                name=data["name"],
+                base_model=data["baseModel"],
+                created_at=dateutil.parser.parse(data["createdAt"]),
+                download_url=data["downloadUrl"],
+                trained_words=json.dumps(data["trainedWords"]),
+                parent_id=model.id
+                )
+            modelVersions.append(model_version)
+
+            for file in data["files"]:
+                version_file = ModelVersionFile(
+                    id=int(file["id"]),
+                    name=file["name"],
+                    size_kb=file["sizeKB"],
+                    type=file["type"],
+                    format=file["format"],
+                    pickle_scan_result=file["pickleScanResult"],
+                    virus_scan_result=file["virusScanResult"],
+                    scanned_at=dateutil.parser.parse(file["scannedAt"]) if file["scannedAt"] else datetime.min,
+                    parent_id=model_version.id
+                )
+                modelVersionFiles.append(version_file)
+
+            for image in data["images"]:
+                version_image = ModelVersionImage(
+                    url=image["url"],
+                    nsfw=image["nsfw"],
+                    width=image["width"],
+                    height=image["height"],
+                    hash=image["hash"],
+                    meta=json.dumps(image["meta"]),
+                    parent_id=model_version.id
+                )
+                modelVersionImages.append(version_image)
+    return metadata, models, modelVersions, modelVersionFiles, modelVersionImages
 
 
 def _request_model_version(model_versions_id: str) -> dict:

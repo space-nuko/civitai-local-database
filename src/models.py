@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String, ARRAY, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, ARRAY, Boolean, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
 
 Base = declarative_base()
 
@@ -27,25 +28,11 @@ class Model(Base):
     description = Column(String)
     type = Column(String)#	enum (Checkpoint, TextualInversion, Hypernetwork, AestheticGradient)
     nsfw = Column(Boolean)
-    tags = Column(ARRAY(String))
+    tags = Column(String) # JSON array
+    triggerWords = Column(String) # JSON array
     creator_username = Column(String)
     creator_image = Column(String) #TODO: figure out key to creator table
-    model_versions_id = Column(Integer)
-    model_versions_name = Column(String)
-    model_versions_created_at = Column(DateTime)
-    model_versions_download_url = Column(String)
-    model_versions_trained_words = Column(ARRAY(String))
-    model_versions_files_size_kb = Column(Integer)
-    model_versions_files_format = Column(String)
-    model_versions_files_pickle_scan_result = Column(String)
-    model_versions_files_virus_scan_result = Column(String)
-    model_versions_files_scanned_at = Column(DateTime)
-    model_versions_images_url = Column(String)
-    model_versions_images_nsfw = Column(String)
-    model_versions_images_width = Column(Integer)
-    model_versions_images_height = Column(Integer)
-    model_versions_images_hash = Column(String)
-    model_versions_images_meta = Column(String)#generation params of image (object | null)
+    versions = relationship("ModelVersion", backref="model")
 
 class ModelVersion(Base):
     """ModelVersion _summary_
@@ -56,25 +43,46 @@ class ModelVersion(Base):
     __tablename__ = "model_versions"
     id = Column(Integer, primary_key=True)
     name = Column(String)
-    model_name = Column(String)
-    model_type = Column(String)
-    model_nsfw = Column(Boolean)
-    model_poi = Column(Boolean)
-    model_id = Column(Integer)
+    base_model = Column(String)
     created_at = Column(DateTime)
     download_url = Column(String)
-    trained_words = Column(ARRAY(String))
-    files_size_kb = Column(Integer)
-    files_format = Column(String)
-    files_pickle_scan_result = Column(String)
-    files_virus_scan_result = Column(String)
-    files_scanned_at = Column(DateTime)
-    images_url = Column(String)
-    images_nsfw = Column(String)
-    images_width = Column(Integer)
-    images_height = Column(Integer)
-    images_hash = Column(String)
-    images_meta = Column(String)
+    trained_words = Column(String) # JSON array
+    parent_id = Column(Integer, ForeignKey("models.id"))
+    files = relationship("ModelVersionFile", backref="model_version")
+    images = relationship("ModelVersionImage", backref="model_version")
+
+class ModelVersionFile(Base):
+    """ModelVersion _summary_
+
+    Args:
+        Base (_type_): _description_
+    """
+    __tablename__ = "model_version_files"
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    size_kb = Column(Integer)
+    type = Column(String)
+    format = Column(String)
+    pickle_scan_result = Column(String)
+    virus_scan_result = Column(String)
+    scanned_at = Column(DateTime)
+    parent_id = Column(Integer, ForeignKey("model_versions.id"))
+
+class ModelVersionImage(Base):
+    """ModelVersion _summary_
+
+    Args:
+        Base (_type_): _description_
+    """
+    __tablename__ = "model_version_images"
+    id = Column(Integer, primary_key=True)
+    url = Column(String)
+    nsfw = Column(String)
+    width = Column(Integer)
+    height = Column(Integer)
+    hash = Column(String)
+    meta = Column(String)
+    parent_id = Column(Integer, ForeignKey("model_versions.id"))
 
 class Tag(Base):
     """Tag _summary_

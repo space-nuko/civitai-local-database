@@ -6,6 +6,7 @@ Usage:
   main.py version [options]
   main.py tags [options]
   main.py sync [options]
+  main.py dump [options]
   main.py (-h | --help)
   main.py --version
 
@@ -26,19 +27,57 @@ Options:
     -h --help       Show this screen.
     --version       Show version.
 """
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select, func
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 import os
+import os.path
+import io
+import json
+import tqdm
+import traceback
+from PIL import PngImagePlugin, Image
+import markdownify
+from pathvalidate import sanitize_filepath
 from docopt import docopt
+import requests
+import base64
 
+from src.models import Base, Model, ModelVersion, ModelVersionFile, ModelVersionImage
 from src.civit_api import get_creators, get_models, get_model_version,  get_tags
+from src import safetensors_hack, lora_util, sd_models
 
 DATABASE_NAME = os.getenv("DATABASE_NAME","civitai_default_db")
-Base = declarative_base()
 engine = create_engine(f"sqlite:///{DATABASE_NAME}.db")
 Base.metadata.create_all(engine)
+Session = sessionmaker(bind=engine)
 
 VERBOSE = False
+MAX_COVER_IMAGES = 3
+
+def convert_civitai_meta(meta):
+    if meta is None:
+        return None
+
+    meta = json.loads(meta)
+    if meta is None:
+        return None
+
+    prompt = meta.pop("prompt", "")
+    neg_prompt = meta.pop("negativePrompt", None)
+    seed = meta.pop("seed", "-1")
+    steps = meta.pop("steps", "20")
+    sampler = meta.pop("sampler", "Euler a")
+    cfgScale = meta.pop("cfgScale", "7")
+
+    meta["Seed"] = seed
+    meta["Steps"] = steps
+    meta["Sampler"] = sampler
+    meta["CFG Scale"] = cfgScale
+
+    generation_params_text = ", ".join([k if k == v else f'{k}: {v}' for k, v in meta.items() if v is not None])
+    negative_prompt_text = "\nNegative prompt: " + neg_prompt if neg_prompt else ""
+    return f"{prompt}{negative_prompt_text}\n{generation_params_text}".strip()
 
 if __name__ == '__main__':
     arguments = docopt(
@@ -84,7 +123,26 @@ if __name__ == '__main__':
                 passed_args["rating"]=arguments['--rating']
             if arguments['--save']:
                 passed_args["save"]=arguments['--save']
-            get_models(**passed_args)
+
+            max_pages = 9999
+            page = 1
+            passed_args["page"] = page
+
+            while page <= max_pages:
+                metadata, models, modelVersions, modelVersionFiles, modelVersionImages = get_models(**passed_args)
+                max_pages = metadata["totalPages"]
+
+                import json
+                print(json.dumps(metadata))
+                session = Session()
+                session.add_all(models)
+                session.add_all(modelVersions)
+                session.add_all(modelVersionFiles)
+                session.add_all(modelVersionImages)
+                session.commit()
+                page += 1
+                passed_args["page"] = page
+
         elif arguments["download"]:
             raise Exception('Not Implemented Yet!')
     elif arguments["version"]:
@@ -104,5 +162,99 @@ if __name__ == '__main__':
         get_tags(**passed_args)
     elif arguments["sync"]:
         raise Exception('Not Implemented Yet!')
+    elif arguments["dump"]:
+        path = "C:\\build\\stable-diffusion-webui\\models\\lora\\lora-torrent\\LoRAs\\CivitAI"
+        os.makedirs(path, exist_ok=True)
+
+        print(f"Saving models to {path}...")
+        failures = []
+
+        stmt = select(Model).where(Model.type == "LORA")
+        with Session() as session:
+            total = session.query(Model).filter(Model.type == "LORA").with_entities(func.count()).scalar()
+            for row in tqdm.tqdm(session.execute(stmt), total=total):
+                model = row[0]
+                for version in model.versions:
+                    try:
+                        print(f"{version.id}")
+                        formats = {f.format: True for f in version.files if f.type == "Model"}
+                        has_safetensors = "SafeTensor" in formats
+                        format = "SafeTensor"
+                        if not has_safetensors:
+                            format = "PickleTensor"
+
+                        file = next(filter(lambda f: f.type == "Model" and f.format == format, version.files))
+                        if file is None:
+                            raise Exception(f"No file! {model.id} {model.name}")
+
+                        parent_path = sanitize_filepath(os.path.join(path, f"{model.id} - {model.name}"), platform="Windows")
+                        if os.path.exists(parent_path):
+                            print(f"=== Already exists, skipping: {parent_path}")
+                            continue
+
+                        cover_images = []
+                        for i, image in enumerate(version.images):
+                            basename = os.path.splitext(file.name)[0]
+                            suffix = "preview"
+                            if i > 0:
+                                suffix = f"preview.{i}"
+                            outpath = sanitize_filepath(os.path.join(parent_path, f"{basename}.{suffix}.png"), platform="Windows")
+                            os.makedirs(os.path.dirname(outpath), exist_ok=True)
+                            resp = requests.get(image.url)
+                            pil = Image.open(io.BytesIO(resp.content))
+
+                            with io.BytesIO() as output_bytes:
+                                metadata = PngImagePlugin.PngInfo()
+                                meta = convert_civitai_meta(image.meta)
+                                if meta:
+                                    metadata.add_text("parameters", meta)
+                                pil.save(output_bytes, "PNG", pnginfo=(metadata))
+                                bytes_data = output_bytes.getvalue()
+
+                            with open(outpath, "wb") as f:
+                                f.write(bytes_data)
+
+                            if len(cover_images) < MAX_COVER_IMAGES:
+                                cover_images.append(base64.b64encode(bytes_data).decode("ascii"))
+
+                        response = requests.get(version.download_url + f"?type={file.type}&format={file.format}")
+                        outpath = sanitize_filepath(os.path.join(parent_path, f"{file.name}"), platform="Windows")
+                        os.makedirs(os.path.dirname(outpath), exist_ok=True)
+                        if os.path.exists(outpath):
+                            raise Exception(f"Path already exists: {outpath}")
+                        with open(outpath, "wb") as f:
+                            f.write(response.content)
+
+                        ext = os.path.splitext(outpath)[1]
+                        if ext != ".safetensors":
+                            legacy_hash = sd_models.model_hash(outpath) # use .pt legacy hash
+                            outpath = lora_util.convert_pt_to_safetensors(outpath)
+                        else:
+                            legacy_hash = safetensors_hack.legacy_hash_file(outpath)
+
+                        assert os.path.splitext(outpath)[1] == ".safetensors"
+
+                        model_hash = safetensors_hack.hash_file(outpath)
+                        metadata = {
+                            "ssmd_cover_images": json.dumps(cover_images),
+                            "ssmd_display_name": f"{model.name}",
+                            "ssmd_author": model.creator_username,
+                            "ssmd_version": version.name,
+                            "ssmd_source": f"https://civitai.com/models/{model.id}",
+                            "ssmd_keywords": ", ".join(json.loads(version.trained_words)),
+                            "ssmd_description": markdownify.markdownify(model.description or "", heading_style="ATX"),
+                            "ssmd_rating": "0",
+                            "ssmd_tags": ", ".join(json.loads(model.tags)),
+                            "sshs_model_hash": model_hash,
+                            "sshs_legacy_hash": legacy_hash
+                           }
+                        lora_util.write_lora_metadata(outpath, metadata)
+                    except Exception as ex:
+                        exs = ''.join(traceback.TracebackException.from_exception(ex).format())
+                        print(f"Failed saving model: {exs}")
+                        failures.append({"model_id": model.id, "version_id": version.id, "exception": str(exs)})
+
+        with open("failures.json", "w") as f:
+            json.dump(failures, f)
     else:
         raise Exception("Arguments parsing failed")
