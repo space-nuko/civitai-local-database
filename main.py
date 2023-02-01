@@ -234,6 +234,11 @@ if __name__ == '__main__':
 
                         assert os.path.splitext(outpath)[1] == ".safetensors"
 
+                        description = model.description or ""
+                        if version.description:
+                            description += "\n<br><hr><br>\n"
+                            description += version.description
+
                         model_hash = safetensors_hack.hash_file(outpath)
                         metadata = {
                             "ssmd_cover_images": json.dumps(cover_images),
@@ -242,7 +247,7 @@ if __name__ == '__main__':
                             "ssmd_version": version.name,
                             "ssmd_source": f"https://civitai.com/models/{model.id}",
                             "ssmd_keywords": ", ".join(json.loads(version.trained_words)),
-                            "ssmd_description": markdownify.markdownify(model.description or "", heading_style="ATX"),
+                            "ssmd_description": markdownify.markdownify(description, heading_style="ATX"),
                             "ssmd_rating": "0",
                             "ssmd_tags": ", ".join(json.loads(model.tags)),
                             "sshs_model_hash": model_hash,

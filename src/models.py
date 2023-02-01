@@ -43,6 +43,7 @@ class ModelVersion(Base):
     __tablename__ = "model_versions"
     id = Column(Integer, primary_key=True)
     name = Column(String)
+    description = Column(String, nullable=True)
     base_model = Column(String)
     created_at = Column(DateTime)
     download_url = Column(String)

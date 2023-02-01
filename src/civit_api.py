@@ -160,6 +160,7 @@ def get_models(
             model_version = ModelVersion(
                 id=int(data["id"]),
                 name=data["name"],
+                description=data["description"],
                 base_model=data["baseModel"],
                 created_at=dateutil.parser.parse(data["createdAt"]),
                 download_url=data["downloadUrl"],
