@@ -48,6 +48,16 @@ from src.civit_api import get_creators, get_models, get_model_version,  get_tags
 from src import safetensors_hack, lora_util, sd_models
 
 DATABASE_NAME = os.getenv("DATABASE_NAME","civitai_default_db")
+
+#if os.path.isfile(DATABASE_NAME + ".db"):
+#    from datetime import datetime
+#    import shutil
+#    today = datetime.now()
+#    path = today.strftime('%Y_%m_%d_%H-%M-%S')
+#    os.makedirs(path)
+#    shutil.copy(DATABASE_NAME + ".db", path)
+#    os.remove(DATABASE_NAME + ".db")
+
 engine = create_engine(f"sqlite:///{DATABASE_NAME}.db")
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
@@ -135,10 +145,12 @@ if __name__ == '__main__':
                 import json
                 print(json.dumps(metadata))
                 session = Session()
-                session.add_all(models)
-                session.add_all(modelVersions)
-                session.add_all(modelVersionFiles)
-                session.add_all(modelVersionImages)
+                # session.add_all(models)
+                # session.add_all(modelVersions)
+                # session.add_all(modelVersionFiles)
+                # session.add_all(modelVersionImages)
+                for m in models + modelVersions + modelVersionFiles + modelVersionImages:
+                    session.merge(m)
                 session.commit()
                 page += 1
                 passed_args["page"] = page
@@ -163,8 +175,8 @@ if __name__ == '__main__':
     elif arguments["sync"]:
         raise Exception('Not Implemented Yet!')
     elif arguments["dump"]:
-        path = "C:\\build\\stable-diffusion-webui\\models\\lora\\lora-torrent\\LoRAs\\CivitAI"
-        os.makedirs(path, exist_ok=True)
+        path = "D:\\stable-diffusion\\models\\lora-torrent\\LoRAs\\CivitAI"
+        assert os.path.isdir(path)
 
         print(f"Saving models to {path}...")
         failures = []
@@ -188,9 +200,6 @@ if __name__ == '__main__':
                             raise Exception(f"No file! {model.id} {model.name}")
 
                         parent_path = sanitize_filepath(os.path.join(path, f"{model.id} - {model.name}"), platform="Windows")
-                        if os.path.exists(parent_path):
-                            print(f"=== Already exists, skipping: {parent_path}")
-                            continue
 
                         cover_images = []
                         for i, image in enumerate(version.images):
@@ -199,6 +208,10 @@ if __name__ == '__main__':
                             if i > 0:
                                 suffix = f"preview.{i}"
                             outpath = sanitize_filepath(os.path.join(parent_path, f"{basename}.{suffix}.png"), platform="Windows")
+                            if os.path.exists(outpath):
+                                print(f"Path already exists, skipping: {outpath}")
+                                continue
+
                             os.makedirs(os.path.dirname(outpath), exist_ok=True)
                             resp = requests.get(image.url)
                             pil = Image.open(io.BytesIO(resp.content))
@@ -217,15 +230,38 @@ if __name__ == '__main__':
                             if len(cover_images) < MAX_COVER_IMAGES:
                                 cover_images.append(base64.b64encode(bytes_data).decode("ascii"))
 
-                        response = requests.get(version.download_url + f"?type={file.type}&format={file.format}")
                         outpath = sanitize_filepath(os.path.join(parent_path, f"{file.name}"), platform="Windows")
                         os.makedirs(os.path.dirname(outpath), exist_ok=True)
-                        if os.path.exists(outpath):
-                            raise Exception(f"Path already exists: {outpath}")
-                        with open(outpath, "wb") as f:
-                            f.write(response.content)
 
-                        ext = os.path.splitext(outpath)[1]
+                        model_path = outpath
+                        bn, ext = os.path.splitext(outpath)
+                        if ext != ".safetensors":
+                            model_path = f"{bn}.safetensors"
+
+                        if os.path.exists(model_path):
+                            print(f"Path already exists, skipping: {outpath}")
+                            continue
+                        print(f"Saving: {outpath}")
+
+                        if not os.path.isfile(outpath):
+                            response = requests.get(version.download_url + f"?type={file.type}&format={file.format}", stream=True)
+                            total_size_in_bytes = int(response.headers.get('content-length', 0))
+                            progress_bar = tqdm.tqdm(total=total_size_in_bytes, unit='iB', unit_scale=True)
+                            try:
+                                with open(outpath, "wb") as f:
+                                    for chunk in response.iter_content(1024):
+                                        progress_bar.update(len(chunk))
+                                        f.write(chunk)
+                                    progress_bar.close()
+                            except KeyboardInterrupt:
+                                progress_bar.close()
+                                print(f"*** DELETING partial file: {outpath}")
+                                os.unlink(outpath)
+                                print("Interrupted, exiting.")
+                                exit(1)
+                        else:
+                            print("Using model file on disk.")
+
                         if ext != ".safetensors":
                             legacy_hash = sd_models.model_hash(outpath) # use .pt legacy hash
                             outpath = lora_util.convert_pt_to_safetensors(outpath)
@@ -236,7 +272,7 @@ if __name__ == '__main__':
 
                         description = model.description or ""
                         if version.description:
-                            description += "\n<br><hr><br>\n"
+                            description += "<hr>"
                             description += version.description
 
                         model_hash = safetensors_hack.hash_file(outpath)
