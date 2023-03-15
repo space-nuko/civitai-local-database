@@ -76,12 +76,12 @@ class ModelVersionImage(Base):
         Base (_type_): _description_
     """
     __tablename__ = "model_version_images"
-    id = Column(Integer, primary_key=True)
+    hash = Column(String, primary_key=True)
+    id = Column(Integer)
     url = Column(String)
     nsfw = Column(String)
     width = Column(Integer)
     height = Column(Integer)
-    hash = Column(String)
     meta = Column(String)
     parent_id = Column(Integer, ForeignKey("model_versions.id"))
 

@@ -100,7 +100,60 @@ def _request_models(
     if response.status_code == 200:
         return response.json()
     else:
-        return None
+        from pprint import pp; pp(response.content)
+        raise RuntimeError(f"Failed request: {response}")
+
+
+def parse_model(item, models, modelVersions, modelVersionFiles, modelVersionImages):
+    model = Model(
+        id=int(item["id"]),
+        name=item["name"],
+        description=item["description"],
+        type=item["type"],
+        nsfw=item["nsfw"],
+        tags=json.dumps(item["tags"]),
+        creator_username=item["creator"]["username"],
+        creator_image=item["creator"]["image"],
+    )
+    models.append(model)
+    for data in item["modelVersions"]:
+        model_version = ModelVersion(
+            id=int(data["id"]),
+            name=data["name"],
+            description=data["description"],
+            base_model=data["baseModel"],
+            created_at=dateutil.parser.parse(data["createdAt"]),
+            download_url=data["downloadUrl"],
+            trained_words=json.dumps(data["trainedWords"]),
+            parent_id=model.id
+            )
+        modelVersions.append(model_version)
+
+        for file in data["files"]:
+            version_file = ModelVersionFile(
+                id=int(file["id"]),
+                name=file["name"],
+                size_kb=file["sizeKB"],
+                type=file["type"],
+                format=file["format"],
+                pickle_scan_result=file["pickleScanResult"],
+                virus_scan_result=file["virusScanResult"],
+                scanned_at=dateutil.parser.parse(file["scannedAt"]) if file["scannedAt"] else datetime.min,
+                parent_id=model_version.id
+            )
+            modelVersionFiles.append(version_file)
+
+        for image in data["images"]:
+            version_image = ModelVersionImage(
+                url=image["url"],
+                nsfw=image["nsfw"],
+                width=image["width"],
+                height=image["height"],
+                hash=image["hash"],
+                meta=json.dumps(image["meta"]),
+                parent_id=model_version.id
+            )
+            modelVersionImages.append(version_image)
 
 
 def get_models(
@@ -143,58 +196,34 @@ def get_models(
     modelVersions = []
     modelVersionFiles = []
     modelVersionImages = []
-    import json
+
     for item in data["items"]:
-        model = Model(
-            id=int(item["id"]),
-            name=item["name"],
-            description=item["description"],
-            type=item["type"],
-            nsfw=item["nsfw"],
-            tags=json.dumps(item["tags"]),
-            creator_username=item["creator"]["username"],
-            creator_image=item["creator"]["image"],
-        )
-        models.append(model)
-        for data in item["modelVersions"]:
-            model_version = ModelVersion(
-                id=int(data["id"]),
-                name=data["name"],
-                description=data["description"],
-                base_model=data["baseModel"],
-                created_at=dateutil.parser.parse(data["createdAt"]),
-                download_url=data["downloadUrl"],
-                trained_words=json.dumps(data["trainedWords"]),
-                parent_id=model.id
-                )
-            modelVersions.append(model_version)
+        parse_model(item, models, modelVersions, modelVersionFiles, modelVersionImages)
 
-            for file in data["files"]:
-                version_file = ModelVersionFile(
-                    id=int(file["id"]),
-                    name=file["name"],
-                    size_kb=file["sizeKB"],
-                    type=file["type"],
-                    format=file["format"],
-                    pickle_scan_result=file["pickleScanResult"],
-                    virus_scan_result=file["virusScanResult"],
-                    scanned_at=dateutil.parser.parse(file["scannedAt"]) if file["scannedAt"] else datetime.min,
-                    parent_id=model_version.id
-                )
-                modelVersionFiles.append(version_file)
-
-            for image in data["images"]:
-                version_image = ModelVersionImage(
-                    url=image["url"],
-                    nsfw=image["nsfw"],
-                    width=image["width"],
-                    height=image["height"],
-                    hash=image["hash"],
-                    meta=json.dumps(image["meta"]),
-                    parent_id=model_version.id
-                )
-                modelVersionImages.append(version_image)
     return metadata, models, modelVersions, modelVersionFiles, modelVersionImages
+
+
+def _request_model(model_id) -> dict:
+    endpoint = f"https://civitai.com/api/v1/models/{model_id}"
+    response = requests.get(endpoint, params={})
+    if response.status_code == 200:
+        return response.json()
+    else:
+        from pprint import pp; pp(response.content)
+        raise RuntimeError(f"Failed request: {response}")
+
+
+def get_model(model_id: str):
+    data = _request_model(model_id)
+
+    models = []
+    modelVersions = []
+    modelVersionFiles = []
+    modelVersionImages = []
+
+    parse_model(data, models, modelVersions, modelVersionFiles, modelVersionImages)
+
+    return models[0], modelVersions, modelVersionFiles, modelVersionImages
 
 
 def _request_model_version(model_versions_id: str) -> dict:

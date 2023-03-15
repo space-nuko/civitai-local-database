@@ -7,6 +7,7 @@ Usage:
   main.py tags [options]
   main.py sync [options]
   main.py dump [options]
+  main.py verify [options]
   main.py (-h | --help)
   main.py --version
 
@@ -22,6 +23,7 @@ Options:
     -t TAG, --tag TAG           Tag search
     -t TYPE, --type TYPE        Model type
     -u USER, --username USER    Model creator username
+    -o PATH, --output PATH      Output directory
 
     -v --verbose    Increase verbosity
     -h --help       Show this screen.
@@ -44,7 +46,7 @@ import requests
 import base64
 
 from src.models import Base, Model, ModelVersion, ModelVersionFile, ModelVersionImage
-from src.civit_api import get_creators, get_models, get_model_version,  get_tags
+from src.civit_api import get_creators, get_models, get_model, get_model_version, get_tags
 from src import safetensors_hack, lora_util, sd_models
 
 DATABASE_NAME = os.getenv("DATABASE_NAME","civitai_default_db")
@@ -174,21 +176,82 @@ if __name__ == '__main__':
         get_tags(**passed_args)
     elif arguments["sync"]:
         raise Exception('Not Implemented Yet!')
-    elif arguments["dump"]:
-        path = "D:\\stable-diffusion\\models\\lora-torrent\\LoRAs\\CivitAI"
-        assert os.path.isdir(path)
-
-        print(f"Saving models to {path}...")
+    elif arguments["verify"]:
         failures = []
-
         stmt = select(Model).where(Model.type == "LORA")
         with Session() as session:
             total = session.query(Model).filter(Model.type == "LORA").with_entities(func.count()).scalar()
             for row in tqdm.tqdm(session.execute(stmt), total=total):
                 model = row[0]
                 for version in model.versions:
+                    formats = {f.format: True for f in version.files if f.type == "Model"}
+                    has_safetensors = "SafeTensor" in formats
+                    format = "SafeTensor"
+                    if not has_safetensors:
+                        format = "PickleTensor"
+
+                    file = next(filter(lambda f: f.type == "Model" and f.format == format, version.files), None)
+                    if file is None:
+                       print(f"No file! {model.id} {model.name}")
+                       failures.append((model, version, "No file!"))
+                       continue
+                    response = requests.get(version.download_url + f"?type={file.type}&format={file.format}", allow_redirects=True, stream=True)
+                    chunk = next(response.iter_content(512), None)
+                    if response.status_code != 200 or not chunk:
+                        print(response.content)
+                        print(response.status_code)
+                        failures.append((model, version, response.content))
+
+        print("Missing models:")
+        for model, version, content in failures:
+            print(f"  {model.id} - {model.name} ({version.name})")
+
+    elif arguments["dump"]:
+        id = None
+        query = None
+        if arguments['--id']:
+            id=int(arguments['--id'])
+        if arguments["--query"]:
+            query=arguments["--query"]
+
+        path = "."
+        if arguments['--output']:
+            path = arguments['--output']
+        path = os.path.join(path, "CivitAI")
+        os.makedirs(path, exist_ok=True)
+
+        print(f"Saving models to {path}...")
+        failures = []
+
+        stmt = select(Model).where(Model.type == "LORA")
+        count_stmt = select(func.count()).select_from(Model).where(Model.type == "LORA")
+        if id:
+            stmt = stmt.filter_by(id=id)
+            count_stmt = count_stmt.filter_by(id=id)
+        if query:
+            stmt = stmt.filter(Model.name.contains(query))
+            count_stmt = count_stmt.filter(Model.name.contains(query))
+
+        with Session() as session:
+            total = session.scalar(count_stmt)
+            if total == 0:
+                if id:
+                    print(f"Fetching model {id}...")
+                    model, modelVersions, modelVersionFiles, modelVersionImages = get_model(id)
+                    for m in [model] + modelVersions + modelVersionFiles + modelVersionImages:
+                        session.merge(m)
+                    session.commit()
+                    total = session.scalar(count_stmt)
+                    assert total > 0
+                else:
+                    raise Exception("No results!")
+
+            for row in tqdm.tqdm(session.execute(stmt), total=total):
+                model = row[0]
+                print(f"Model: {model.id} - {model.name}")
+                for version in model.versions:
                     try:
-                        print(f"{version.id}")
+                        print(f"  Version: {version.id} - {version.name}")
                         formats = {f.format: True for f in version.files if f.type == "Model"}
                         has_safetensors = "SafeTensor" in formats
                         format = "SafeTensor"
@@ -201,8 +264,9 @@ if __name__ == '__main__':
 
                         parent_path = sanitize_filepath(os.path.join(path, f"{model.id} - {model.name}"), platform="Windows")
 
+                        print("Downloading preview images...")
                         cover_images = []
-                        for i, image in enumerate(version.images):
+                        for i, image in tqdm.tqdm(enumerate(version.images), total=len(version.images)):
                             basename = os.path.splitext(file.name)[0]
                             suffix = "preview"
                             if i > 0:
@@ -241,8 +305,8 @@ if __name__ == '__main__':
                         if os.path.exists(model_path):
                             print(f"Path already exists, skipping: {outpath}")
                             continue
-                        print(f"Saving: {outpath}")
 
+                        print(f"Saving: {outpath}")
                         if not os.path.isfile(outpath):
                             response = requests.get(version.download_url + f"?type={file.type}&format={file.format}", stream=True)
                             total_size_in_bytes = int(response.headers.get('content-length', 0))
