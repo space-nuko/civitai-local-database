@@ -209,10 +209,13 @@ if __name__ == '__main__':
     elif arguments["dump"]:
         id = None
         query = None
+        user = None
         if arguments['--id']:
             id=int(arguments['--id'])
         if arguments["--query"]:
             query=arguments["--query"]
+        if arguments["--username"]:
+            user=arguments["--username"]
 
         path = "."
         if arguments['--output']:
@@ -231,6 +234,9 @@ if __name__ == '__main__':
         if query:
             stmt = stmt.filter(Model.name.contains(query))
             count_stmt = count_stmt.filter(Model.name.contains(query))
+        if user:
+            stmt = stmt.filter(Model.creator_username.contains(user))
+            count_stmt = count_stmt.filter(Model.creator_username.contains(user))
 
         with Session() as session:
             total = session.scalar(count_stmt)
