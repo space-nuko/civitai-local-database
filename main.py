@@ -35,6 +35,7 @@ from sqlalchemy.orm import sessionmaker
 import os
 import os.path
 import io
+import time
 import json
 import tqdm
 import traceback
@@ -141,7 +142,13 @@ if __name__ == '__main__':
             passed_args["page"] = page
 
             while page <= max_pages:
-                metadata, models, modelVersions, modelVersionFiles, modelVersionImages = get_models(**passed_args)
+                try:
+                    metadata, models, modelVersions, modelVersionFiles, modelVersionImages = get_models(**passed_args)
+                except RuntimeError as ex:
+                    print(f"!!! FAILED to get page: {ex}")
+                    time.sleep(60 * 10)
+                    continue
+
                 max_pages = metadata["totalPages"]
 
                 import json
@@ -156,6 +163,8 @@ if __name__ == '__main__':
                 session.commit()
                 page += 1
                 passed_args["page"] = page
+
+                time.sleep(60)
 
         elif arguments["download"]:
             raise Exception('Not Implemented Yet!')
@@ -284,21 +293,26 @@ if __name__ == '__main__':
 
                             os.makedirs(os.path.dirname(outpath), exist_ok=True)
                             resp = requests.get(image.url)
-                            pil = Image.open(io.BytesIO(resp.content))
 
-                            with io.BytesIO() as output_bytes:
-                                metadata = PngImagePlugin.PngInfo()
-                                meta = convert_civitai_meta(image.meta)
-                                if meta:
-                                    metadata.add_text("parameters", meta)
-                                pil.save(output_bytes, "PNG", pnginfo=(metadata))
-                                bytes_data = output_bytes.getvalue()
+                            try:
+                                pil = Image.open(io.BytesIO(resp.content))
 
-                            with open(outpath, "wb") as f:
-                                f.write(bytes_data)
+                                with io.BytesIO() as output_bytes:
+                                    metadata = PngImagePlugin.PngInfo()
+                                    meta = convert_civitai_meta(image.meta)
+                                    if meta:
+                                        metadata.add_text("parameters", meta)
+                                    pil.save(output_bytes, "PNG", pnginfo=(metadata))
+                                    bytes_data = output_bytes.getvalue()
 
-                            if len(cover_images) < MAX_COVER_IMAGES:
-                                cover_images.append(base64.b64encode(bytes_data).decode("ascii"))
+                                with open(outpath, "wb") as f:
+                                    f.write(bytes_data)
+
+                                if len(cover_images) < MAX_COVER_IMAGES:
+                                    cover_images.append(base64.b64encode(bytes_data).decode("ascii"))
+                            except Exception as ex:
+                                print(f"!!! FAILED saving preview image: {ex}")
+
 
                         outpath = sanitize_filepath(os.path.join(parent_path, f"{file.name}"), platform="Windows")
                         os.makedirs(os.path.dirname(outpath), exist_ok=True)
