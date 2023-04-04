@@ -235,8 +235,9 @@ if __name__ == '__main__':
         print(f"Saving models to {path}...")
         failures = []
 
-        stmt = select(Model).where(Model.type.in_(["LORA", "LyCORIS"]))
-        count_stmt = select(func.count()).select_from(Model).where(Model.type.in_(["LORA", "LyCORIS"]))
+        model_types = ["LORA", "LoCon", "LyCORIS"]
+        stmt = select(Model).where(Model.type.in_(model_types))
+        count_stmt = select(func.count()).select_from(Model).where(Model.type.in_(model_types))
         if ids:
             stmt = stmt.where(Model.id.in_(ids))
             count_stmt = count_stmt.where(Model.id.in_(ids))
@@ -249,7 +250,7 @@ if __name__ == '__main__':
 
         with Session() as session:
             total = session.scalar(count_stmt)
-            if total == 0:
+            if total != len(ids):
                 if ids:
                     for id in ids:
                         print(f"Fetching model {id}...")
