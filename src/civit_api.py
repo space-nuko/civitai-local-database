@@ -135,7 +135,7 @@ def parse_model(item, models, modelVersions, modelVersionFiles, modelVersionImag
                 name=file["name"],
                 size_kb=file["sizeKB"],
                 type=file["type"],
-                format=file["format"],
+                format=file["metadata"]["format"],
                 pickle_scan_result=file["pickleScanResult"],
                 virus_scan_result=file["virusScanResult"],
                 scanned_at=dateutil.parser.parse(file["scannedAt"]) if file["scannedAt"] else datetime.min,
