@@ -216,11 +216,11 @@ if __name__ == '__main__':
             print(f"  {model.id} - {model.name} ({version.name})")
 
     elif arguments["dump"]:
-        id = None
+        ids = []
         query = None
         user = None
         if arguments['--id']:
-            id=int(arguments['--id'])
+            ids=[int(x.strip()) for x in arguments['--id'].split(",")]
         if arguments["--query"]:
             query=arguments["--query"]
         if arguments["--username"]:
@@ -235,11 +235,11 @@ if __name__ == '__main__':
         print(f"Saving models to {path}...")
         failures = []
 
-        stmt = select(Model).where(Model.type == "LORA")
-        count_stmt = select(func.count()).select_from(Model).where(Model.type == "LORA")
-        if id:
-            stmt = stmt.filter_by(id=id)
-            count_stmt = count_stmt.filter_by(id=id)
+        stmt = select(Model).where(Model.type.in_(["LORA", "LyCORIS"]))
+        count_stmt = select(func.count()).select_from(Model).where(Model.type.in_(["LORA", "LyCORIS"]))
+        if ids:
+            stmt = stmt.where(Model.id.in_(ids))
+            count_stmt = count_stmt.where(Model.id.in_(ids))
         if query:
             stmt = stmt.filter(Model.name.contains(query))
             count_stmt = count_stmt.filter(Model.name.contains(query))
@@ -250,14 +250,15 @@ if __name__ == '__main__':
         with Session() as session:
             total = session.scalar(count_stmt)
             if total == 0:
-                if id:
-                    print(f"Fetching model {id}...")
-                    model, modelVersions, modelVersionFiles, modelVersionImages = get_model(id)
-                    for m in [model] + modelVersions + modelVersionFiles + modelVersionImages:
-                        session.merge(m)
-                    session.commit()
+                if ids:
+                    for id in ids:
+                        print(f"Fetching model {id}...")
+                        model, modelVersions, modelVersionFiles, modelVersionImages = get_model(id)
+                        for m in [model] + modelVersions + modelVersionFiles + modelVersionImages:
+                            session.merge(m)
+                        session.commit()
                     total = session.scalar(count_stmt)
-                    assert total > 0
+                    assert total >= len(ids)
                 else:
                     raise Exception("No results!")
 
