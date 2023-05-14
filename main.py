@@ -250,7 +250,7 @@ if __name__ == '__main__':
 
         with Session() as session:
             total = session.scalar(count_stmt)
-            if total != len(ids):
+            if len(ids) > 0 and total != len(ids):
                 if ids:
                     for id in ids:
                         print(f"Fetching model {id}...")
@@ -261,7 +261,7 @@ if __name__ == '__main__':
                     total = session.scalar(count_stmt)
                     assert total >= len(ids)
                 else:
-                    raise Exception("No results!")
+                    raise Exception(f"No results! {total} {len(ids)}")
 
             for row in tqdm.tqdm(session.execute(stmt), total=total):
                 model = row[0]

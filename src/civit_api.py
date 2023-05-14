@@ -123,10 +123,10 @@ def parse_model(item, models, modelVersions, modelVersionFiles, modelVersionImag
             description=data["description"],
             base_model=data["baseModel"],
             created_at=dateutil.parser.parse(data["createdAt"]),
-            download_url=data["downloadUrl"],
+            download_url=data.get("downloadUrl", ""),
             trained_words=json.dumps(data["trainedWords"]),
             parent_id=model.id
-            )
+        )
         modelVersions.append(model_version)
 
         for file in data["files"]:
